@@ -34,8 +34,9 @@ jobs:
       - name: Download Upstream
         run: |
           echo "Fetching from ${{ matrix.url }}..."
-          curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-               -L --retry 10 --retry-delay 10 --retry-max-time 600 \
+          curl -4 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+               -L --retry 10 --retry-delay 5 --retry-max-time 600 \
+               --connect-timeout 10 --speed-time 10 --speed-limit 1 \
                -o original.tgz ${{ matrix.url }}
 
       - name: Run Repack Script
