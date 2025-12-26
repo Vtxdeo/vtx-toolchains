@@ -37,10 +37,12 @@ jobs:
           echo ">>> Pulling Docker image: $IMAGE"
           docker pull $IMAGE
 
-          CONTAINER_ID=$(docker create $IMAGE)
+          CONTAINER_ID=$(docker run -d --entrypoint /bin/sh $IMAGE -c "tail -f /dev/null")
+          
+          echo ">>> Container started: $CONTAINER_ID"
 
-          docker start $CONTAINER_ID
-          COMPILER_PATH=$(docker exec $CONTAINER_ID which ${{ matrix.docker_tag }}-gcc)
+          COMPILER_BIN="${{ matrix.docker_tag }}-gcc"
+          COMPILER_PATH=$(docker exec $CONTAINER_ID which $COMPILER_BIN)
           echo ">>> Found compiler at: $COMPILER_PATH"
 
           TOOLCHAIN_BIN_DIR=$(dirname "$COMPILER_PATH")
