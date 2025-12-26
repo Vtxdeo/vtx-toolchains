@@ -17,33 +17,50 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            url: "https://musl.cc/x86_64-linux-musl-cross.tgz"
+            docker_tag: x86_64-linux-musl
           - arch: aarch64
-            url: "https://musl.cc/aarch64-linux-musl-cross.tgz"
+            docker_tag: aarch64-linux-musl
           - arch: arm-linux-musleabi
-            url: "https://musl.cc/arm-linux-musleabi-cross.tgz"
+            docker_tag: arm-linux-musleabi
           - arch: mipsel
-            url: "https://musl.cc/mipsel-linux-musl-cross.tgz"
+            docker_tag: mipsel-linux-musl
           - arch: riscv64
-            url: "https://musl.cc/riscv64-linux-musl-cross.tgz"
+            docker_tag: riscv64-linux-musl
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Download Upstream
+      - name: Extract from Docker
         run: |
-          echo "Fetching from ${{ matrix.url }}..."
-          curl -4 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-               -L --retry 10 --retry-delay 5 --retry-max-time 600 \
-               --connect-timeout 10 --speed-time 10 --speed-limit 1 \
-               -o original.tgz ${{ matrix.url }}
+          IMAGE="muslcc/x86_64:${{ matrix.docker_tag }}"
+          echo ">>> Pulling Docker image: $IMAGE"
+          docker pull $IMAGE
+
+          CONTAINER_ID=$(docker create $IMAGE)
+
+          docker start $CONTAINER_ID
+          COMPILER_PATH=$(docker exec $CONTAINER_ID which ${{ matrix.docker_tag }}-gcc)
+          echo ">>> Found compiler at: $COMPILER_PATH"
+
+          TOOLCHAIN_BIN_DIR=$(dirname "$COMPILER_PATH")
+          TOOLCHAIN_ROOT=$(dirname "$TOOLCHAIN_BIN_DIR")
+          echo ">>> Toolchain root determined as: $TOOLCHAIN_ROOT"
+
+          docker cp "$CONTAINER_ID:$TOOLCHAIN_ROOT" ./extracted_toolchain
+
+          docker rm -f $CONTAINER_ID
+
+          cd extracted_toolchain
+          tar -czf ../original.tgz .
+          cd ..
+          rm -rf extracted_toolchain
 
       - name: Run Repack Script
         id: repack
         run: |
           chmod +x scripts/repack.sh
-          ./scripts/repack.sh "${{ matrix.arch }}" "${{ matrix.url }}" "original.tgz"
+          ./scripts/repack.sh "${{ matrix.arch }}" "docker://${{ matrix.docker_tag }}" "original.tgz"
 
       - name: Generate Checksum
         run: sha256sum ${{ steps.repack.outputs.FILE_PATH }} > ${{ steps.repack.outputs.FILE_PATH }}.sha256
@@ -55,5 +72,5 @@ jobs:
           files: |
             ${{ steps.repack.outputs.FILE_PATH }}
             ${{ steps.repack.outputs.FILE_PATH }}.sha256
-          body: "Automated VTX Toolchains synchronization. Build Date: $(date +'%Y-%m-%d')"
+          body: "Automated VTX Toolchains synchronization from Docker Hub. Build Date: $(date +'%Y-%m-%d')"
           prerelease: false
