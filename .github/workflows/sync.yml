@@ -1,0 +1,56 @@
+name: Sync & Repack Toolchains
+
+on:
+  schedule:
+    - cron: '0 0 1 * *' # 每月1号运行
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repack_and_release:
+    name: Repack ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            url: "https://musl.cc/x86_64-linux-musl-cross.tgz"
+          - arch: aarch64
+            url: "https://musl.cc/aarch64-linux-musl-cross.tgz"
+          - arch: arm-linux-musleabi
+            url: "https://musl.cc/arm-linux-musleabi-cross.tgz"
+          - arch: mipsel
+            url: "https://musl.cc/mipsel-linux-musl-cross.tgz"
+          - arch: riscv64
+            url: "https://musl.cc/riscv64-linux-musl-cross.tgz"
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download Upstream
+        run: |
+          echo "Fetching from ${{ matrix.url }}..."
+          wget --tries=5 --waitretry=10 -q -O original.tgz ${{ matrix.url }}
+
+      - name: Run Repack Script
+        id: repack
+        run: |
+          chmod +x scripts/repack.sh
+          ./scripts/repack.sh "${{ matrix.arch }}" "${{ matrix.url }}" "original.tgz"
+
+      - name: Generate Checksum
+        run: sha256sum ${{ steps.repack.outputs.FILE_PATH }} > ${{ steps.repack.outputs.FILE_PATH }}.sha256
+
+      - name: Release Toolchain
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: toolchain-latest
+          files: |
+            ${{ steps.repack.outputs.FILE_PATH }}
+            ${{ steps.repack.outputs.FILE_PATH }}.sha256
+          body: "Automated VTX Toolchains synchronization. Build Date: $(date +'%Y-%m-%d')"
+          prerelease: false
