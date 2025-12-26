@@ -2,7 +2,7 @@ name: Sync & Repack Toolchains
 
 on:
   schedule:
-    - cron: '0 0 1 * *' # 每月1号运行
+    - cron: '0 0 1 * *'
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,9 @@ jobs:
       - name: Download Upstream
         run: |
           echo "Fetching from ${{ matrix.url }}..."
-          wget --tries=5 --waitretry=10 -q -O original.tgz ${{ matrix.url }}
+          curl -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+               -L --retry 10 --retry-delay 10 --retry-max-time 600 \
+               -o original.tgz ${{ matrix.url }}
 
       - name: Run Repack Script
         id: repack
