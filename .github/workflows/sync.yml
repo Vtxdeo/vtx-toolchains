@@ -31,41 +31,87 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Extract from Docker
+      - name: Extract and Sanitize
         run: |
           IMAGE="muslcc/x86_64:${{ matrix.docker_tag }}"
           echo ">>> Pulling Docker image: $IMAGE"
           docker pull $IMAGE
 
           CONTAINER_ID=$(docker run -d --entrypoint /bin/sh $IMAGE -c "tail -f /dev/null")
-          echo ">>> Container started: $CONTAINER_ID"
 
-          COMPILER_NAME="${{ matrix.docker_tag }}-gcc"
-          echo ">>> Searching for compiler: $COMPILER_NAME"
-
-          COMPILER_PATH=$(docker exec $CONTAINER_ID find / -name "$COMPILER_NAME" -type f -executable 2>/dev/null | head -n 1)
+          TARGET_GCC="${{ matrix.docker_tag }}-gcc"
+          COMPILER_PATH=$(docker exec $CONTAINER_ID find / -name "$TARGET_GCC" -type f -executable 2>/dev/null | head -n 1)
           
           if [ -z "$COMPILER_PATH" ]; then
-            echo "❌ Critical Error: Compiler $COMPILER_NAME not found inside the container!"
-            echo ">>> Debug: Listing /bin directory:"
-            docker exec $CONTAINER_ID ls -F /bin
-            docker rm -f $CONTAINER_ID
-            exit 1
+             echo ">>> Prefixed compiler not found. Falling back to 'gcc'..."
+             COMPILER_PATH=$(docker exec $CONTAINER_ID find / -name "gcc" -type f -executable 2>/dev/null | head -n 1)
+          fi
+          
+          if [ -z "$COMPILER_PATH" ]; then
+             echo "❌ Critical Error: Compiler not found inside container!"
+             docker rm -f $CONTAINER_ID
+             exit 1
           fi
           
           echo ">>> Found compiler at: $COMPILER_PATH"
           
           TOOLCHAIN_BIN_DIR=$(dirname "$COMPILER_PATH")
           TOOLCHAIN_ROOT=$(dirname "$TOOLCHAIN_BIN_DIR")
-          echo ">>> Toolchain root determined as: $TOOLCHAIN_ROOT"
+          [ "$TOOLCHAIN_ROOT" == "/" ] && TOOLCHAIN_ROOT=""
           
-          docker cp "$CONTAINER_ID:$TOOLCHAIN_ROOT" ./extracted_toolchain
+          echo ">>> Toolchain Root: '$TOOLCHAIN_ROOT'"
+
+          DIRS_TO_TAR="bin lib include libexec share ${{ matrix.docker_tag }}"
+          
+          echo ">>> Archiving directories: $DIRS_TO_TAR"
+
+          if [ -z "$TOOLCHAIN_ROOT" ]; then
+             docker exec $CONTAINER_ID tar -czf /tmp/raw_toolchain.tgz $DIRS_TO_TAR
+          else
+             docker exec $CONTAINER_ID tar -czf /tmp/raw_toolchain.tgz -C "$TOOLCHAIN_ROOT" $DIRS_TO_TAR
+          fi
+          
+          docker cp "$CONTAINER_ID:/tmp/raw_toolchain.tgz" ./raw_toolchain.tgz
           docker rm -f $CONTAINER_ID
+
+          mkdir -p sanitize_stage
+          tar -xf raw_toolchain.tgz -C sanitize_stage
           
-          cd extracted_toolchain
-          tar -czf ../original.tgz .
-          cd ..
-          rm -rf extracted_toolchain
+          echo ">>> Sanitizing 'bin' directory..."
+          cd sanitize_stage/bin
+
+          PREFIX="${{ matrix.docker_tag }}-"
+          TOOLS="gcc g++ ar as ld nm objcopy objdump ranlib strip c++ cpp gcc-ar gcc-nm gcc-ranlib gcov"
+          
+          for TOOL in $TOOLS; do
+              if [ -f "$TOOL" ] && [ ! -f "${PREFIX}${TOOL}" ]; then
+                  echo "  -> Linking ${PREFIX}${TOOL} to $TOOL"
+                  ln -s "$TOOL" "${PREFIX}${TOOL}"
+              fi
+          done
+
+          echo ">>> Removing non-toolchain binaries (Busybox cleanup)..."
+
+          mkdir ../bin_kept
+
+          mv ${PREFIX}* ../bin_kept/ 2>/dev/null || true
+
+          for TOOL in $TOOLS; do
+              [ -f "$TOOL" ] && mv "$TOOL" ../bin_kept/
+          done
+
+          rm -rf *
+
+          mv ../bin_kept/* .
+          rmdir ../bin_kept
+          
+          echo ">>> Bin directory sanitized. Current contents:"
+          ls -F
+          
+          cd ../..
+
+          tar -czf original.tgz -C sanitize_stage .
+          rm -rf sanitize_stage raw_toolchain.tgz
 
       - name: Run Repack Script
         id: repack
